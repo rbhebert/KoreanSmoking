@@ -1,0 +1,136 @@
+---
+title: "korean_smoking"
+author: "Reginald Hebert and Ian Jung"
+date: '2022-04-27'
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+```
+
+Load relevant packages:
+
+```{r}
+library(pacman)
+p_load(haven, grf, tidyverse, tidymodels, knitr, broom, corrplot, DiagrammeR)
+
+```
+
+Load data file: 
+
+```{r}
+dtafile <- file.path(getwd(), "knhns_ML.dta")
+
+ks.df <- read_dta(dtafile)
+
+head(ks.df)
+```
+
+Extract specific variables from data frame to include as X (covariates as matrix), Y (outcome as vector), W (treatment assignment as vector):
+
+
+```{r}
+
+# heavy smoking rate test
+
+treat_post_heavy = ks.df$treated_current_heavy_14 * ks.df$postPrice
+
+X_matrix <- as.matrix(ks.df[,c(2,3,5,11,12,13,15,16,19,20,34,36,37, 49:57, 59:70)])
+Y <- as.vector(ks.df$current_heavy)
+W <- as.vector(treat_post_heavy)
+
+
+# include clusters
+
+cf.raw <- causal_forest(X = X_matrix, Y = Y, W = W, num.trees = 10000)
+
+varimp = variable_importance(cf.raw)
+
+selected.idx = which(varimp > mean(varimp))
+
+cf <- causal_forest(X = X_matrix[,selected.idx], Y = Y, W = W, num.trees = 10000, clusters = ks.df$region )
+
+tau.hat = predict(cf)$predictions
+
+ATE = average_treatment_effect(cf)
+paste("95% CI for the ATE:", round(ATE[1], 3),
+      "+/-", round(qnorm(0.975) * ATE[2], 3))
+
+
+
+high_effect = tau.hat < median(tau.hat)
+
+ate.high = average_treatment_effect(cf, subset = high_effect) 
+
+ate.low = average_treatment_effect(cf, subset = !high_effect)
+
+paste("95% CI for difference in ATE:",
+      round(ate.high[1] - ate.low[1], 3), "+/-",
+      round(qnorm(0.975) * sqrt(ate.high[2]^2 + ate.low[2]^2), 3))
+
+
+
+ATE.male = average_treatment_effect(cf, subset = X_matrix[,13] == 1)
+
+ATE.female = average_treatment_effect(cf, subset = X_matrix[,13] == 0)
+
+paste("95% CI for difference in ATE:",
+      round(ATE.male[1] - ATE.female[1], 3), "+/-",
+      round(qnorm(0.975) * sqrt(ATE.male[2]^2 + ATE.female[2]^2), 3))
+
+
+# testing BMI ATE
+
+ATE.BMI_obese = average_treatment_effect(cf, subset = X_matrix[,34] >= 25)
+
+ATE.BMI_nonobese = average_treatment_effect(cf, subset = X_matrix[,34] < 25)
+
+paste("95% CI for difference in ATE:",
+      round(ATE.BMI_obese[1] - ATE.BMI_nonobese[1], 3), "+/-",
+      round(qnorm(0.975) * sqrt(ATE.BMI_obese[2]^2 + ATE.BMI_nonobese[2]^2), 3))
+
+heavy_smoking_obese = mean(data.matrix(ks.df[ks.df$bmi >= 25, "current_heavy"]))
+
+heavy_smoking_nonobese = mean(data.matrix(ks.df[ks.df$bmi < 25, "current_heavy"]))
+
+heavy_smoking_nonobese
+
+heavy_smoking_obese
+
+# OCC7
+
+ATE.occ7 = average_treatment_effect(cf, subset = X_matrix[,29] == 1)
+
+ATE.occ7NO = average_treatment_effect(cf, subset = X_matrix[,29] == 0) 
+
+paste("95% CI for difference in ATE:",
+      round(ATE.occ7[1] - ATE.occ7NO[1], 3), "+/-",
+      round(qnorm(0.975) * sqrt(ATE.occ7[2]^2 + ATE.occ7NO[2]^2), 3))
+
+
+```
+
+
+
+Generate histogram of treatment effects:
+
+
+
+```{r}
+
+hist(tau.hat)
+pdf("treatment_effect.pdf")
+pardef = par(mar = c(5, 4, 4, 2) + 0.5, cex.lab=1.5, cex.axis=1.5, cex.main=1.5, cex.sub=1.5)
+hist(tau.hat, xlab = "Treatment Effect Estimate", main = "")
+dev.off()
+
+```
+
+
+```{r}
+get_scores(cf)
+
+print(cf)
+```
+
